@@ -7,10 +7,60 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from twocaptcha import TwoCaptcha
+from selenium.common.exceptions import NoSuchElementException
 
 def get_random_user_agent():
     ua = UserAgent()
     return ua.random
+
+def slow_scroll_to(driver, x, y, duration=1):
+    """
+    Slowly scrolls the page to the specified coordinates (x, y) over the given duration.
+    """
+    current_x = driver.execute_script("return window.scrollX;")
+    current_y = driver.execute_script("return window.scrollY;")
+    distance_x = x - current_x
+    distance_y = y - current_y
+    start_time = time.time()
+    while time.time() - start_time <= duration:
+        elapsed_time = time.time() - start_time
+        progress = min(1, elapsed_time / duration)
+        target_x = current_x + distance_x * progress
+        target_y = current_y + distance_y * progress
+        driver.execute_script("window.scrollTo(arguments[0], arguments[1]);", target_x, target_y)
+        time.sleep(random.uniform(0.5, 3))  # Adjust the sleep duration for smoother scrolling
+
+def solve_captcha(captcha_image_path):
+    """
+    Solve CAPTCHA using 2Captcha API.
+    """
+    api_key = 'your_2captcha_api_key'  # Replace with your actual 2Captcha API key
+    solver = TwoCaptcha(api_key)
+    
+    captcha_id = solver.normal(captcha_file=captcha_image_path)
+
+    # Poll 2Captcha API until solution is received
+    while True:
+        try:
+            solution_response = solver.get_result(captcha_id)
+            if solution_response['status'] == 1:
+                captcha_solution = solution_response['code']
+                return captcha_solution
+            elif solution_response['status'] == 0:
+                time.sleep(5)  # Wait for a few seconds before checking again
+        except Exception as e:
+            print(f"Error occurred while solving CAPTCHA: {e}")
+
+def check_for_captcha(driver):
+    """
+    Check if a CAPTCHA is present on the page.
+    """
+    try:
+        driver.find_element(By.ID, "main-iframe")  # Replace "captcha-id" with the actual ID of the CAPTCHA element
+        return True
+    except NoSuchElementException:
+        return False
 
 def search_iaai_website(search_query, max_mileage=100000, max_pages=3, min_delay=2, max_delay=5, min_page_load_delay=3, max_page_load_delay=7):
     try:
@@ -18,7 +68,6 @@ def search_iaai_website(search_query, max_mileage=100000, max_pages=3, min_delay
         chrome_path = '/opt/homebrew/bin/chromedriver'
         chrome_service = ChromeService(executable_path=chrome_path)
         chrome_options = Options()
-        # chrome_options.add_argument('--headless')  # Run Chrome in headless mode (no GUI)
         chrome_options.add_argument(f'user-agent={get_random_user_agent()}')  # Rotate User-Agent
         driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
 
@@ -28,57 +77,49 @@ def search_iaai_website(search_query, max_mileage=100000, max_pages=3, min_delay
         page_url = f'https://iaai.com/Search?searchkeyword={search_query}&page=1'
         driver.get(page_url)
 
+        # Check for CAPTCHA upon opening the website
+        if check_for_captcha(driver):
+            print("CAPTCHA detected upon opening the website.")
+            # Handle the CAPTCHA (e.g., solve it using 2Captcha)
+            # captcha_solution = solve_captcha(captcha_image_path)  # Replace with the path to the CAPTCHA image
+            # Once the CAPTCHA is solved, proceed with further actions
+        else:
+            print("No CAPTCHA detected upon opening the website.")
+            # Proceed with further actions
+
         for page_number in range(1, max_pages + 1):
             print("URL: ", driver.current_url)
             # Wait for a random time delay before processing the page
             delay = random.uniform(min_delay, max_delay)
             time.sleep(delay)
 
+            # Handle the cookie prompt (click "I understand")
+            try:
+                cookie_prompt = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "onetrust-accept-btn-handler")))
+                cookie_prompt.click()
+            except:
+                print("Cookie prompt not found or could not be clicked.")
+
+            # Wait for the interfering element (cookie banner) to become invisible
+            wait = WebDriverWait(driver, 10)
+            wait.until(EC.invisibility_of_element_located((By.ID, "onetrust-pc-btn-handler")))
+
             # Generate a random delay after loading the page
             page_load_delay = random.uniform(min_page_load_delay, max_page_load_delay)
             time.sleep(page_load_delay)
 
-            # Extract and print information related to vehicles on the current page
-            vehicle_infos = driver.find_elements(By.CLASS_NAME, 'heading-7.rtl-disabled')
-            mileage_elements = driver.find_elements(By.CLASS_NAME, 'data-list__value.rtl-disabled')  # Replace with the actual class for mileage
-            location_elements = driver.find_elements(By.CSS_SELECTOR, 'span.data-list__value.text-truncate[title]')  # Replace with the actual class and title for location
+            # Refresh the current page
+            driver.refresh()
 
-            for index, (vehicle_info, mileage_element, location_element) in enumerate(zip(vehicle_infos, mileage_elements, location_elements), start=1):
-                if mileage_element:
-                    # Extract the numeric part of the mileage
-                    mileage_text = mileage_element.text.replace('Mileage:', '').replace('miles', '').replace(',', '').strip()
-
-                    try:
-                        if 'Not Actual' not in mileage_text and 'Not Required/Exempt' not in mileage_text and 'Inoperable Digital Dash' not in mileage_text:
-                            mileage_numeric = int(''.join(filter(str.isdigit, mileage_text)))
-                            if mileage_numeric <= max_mileage:
-                                overall_index += 1  # Increment the overall index
-                                print(f"\nVehicle {overall_index} Information:")
-
-                                # Trim the location to only display "Branch:" and the name of the location
-                                trimmed_location = location_element.get_attribute('title').replace('Branch:', '').strip()
-                                print(f"Location: Branch: {trimmed_location}")
-
-                                print(f"Mileage: {mileage_numeric} miles")
-                                print(vehicle_info.text.strip())
-                                print("-" * 50)
-
-                    except ValueError:
-                        print(f"\nError: Unable to convert mileage to integer for Vehicle {index}. Mileage: {mileage_text}")
-
-            # Go to the next page
-            if page_number < max_pages:
-                try:
-                    # Scroll to the next arrow button
-                    next_arrow = driver.find_element(By.CLASS_NAME, "btn-next")
-                    driver.execute_script("arguments[0].scrollIntoView(true);", next_arrow)
-                    time.sleep(1)  # Wait for scrolling to complete
-                    
-                    # Click on the next arrow with a random delay
-                    time.sleep(random.uniform(min_delay, max_delay))
-                    next_arrow.click()
-                except Exception as e:
-                    print(f"Error while clicking next arrow: {e}")
+            # Check if a CAPTCHA is present after refreshing the page
+            if check_for_captcha(driver):
+                print("CAPTCHA detected after refreshing the page.")
+                # Handle the CAPTCHA (e.g., solve it using 2Captcha)
+                # captcha_solution = solve_captcha(captcha_image_path)  # Replace with the path to the CAPTCHA image
+                # Once the CAPTCHA is solved, proceed with further actions
+            else:
+                print("No CAPTCHA detected after refreshing the page.")
+                # Proceed with further actions
 
         # Close the browser when done
         driver.quit()

@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains  # Import ActionChains
 from twocaptcha import TwoCaptcha
 from selenium.common.exceptions import NoSuchElementException
 
@@ -96,7 +97,10 @@ def search_iaai_website(search_query, max_mileage=100000, max_pages=3, min_delay
             # Handle the cookie prompt (click "I understand")
             try:
                 cookie_prompt = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "onetrust-accept-btn-handler")))
-                cookie_prompt.click()
+                # Simulate a longer-duration click
+                ActionChains(driver).click_and_hold(cookie_prompt).perform()
+                time.sleep(0.2)  # Adjust the duration of the click-and-hold
+                ActionChains(driver).release(cookie_prompt).perform()
             except:
                 print("Cookie prompt not found or could not be clicked.")
 
